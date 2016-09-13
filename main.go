@@ -20,10 +20,11 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"os"
 	"time"
+	"sync"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
@@ -40,51 +41,76 @@ import (
 )
 
 var (
-	ReqIdChars        = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	ReqIdLen          = 16
 	DefaultConfigPath = "/etc/deadpool.yaml"
 	Version           = "0.1"
 )
+
+type awsConfig struct {
+	Region  string `yaml:"region"`
+	AccessKeyId     string                   `yaml:"access_key_id"`
+	SecretAccessKey string                   `yaml:"secret_access_key"`
+}
+
+func (self *awsConfig) Validate() error {
+	if len(self.Region) == 0 {
+		return fmt.Errorf("Empty AWS region")
+	}
+	if len(self.AccessKeyId) == 0 {
+		return fmt.Errorf("Empty AWS access key ID")
+	}
+	if len(self.SecretAccessKey) == 0 {
+		return fmt.Errorf("Empty AWS secret access key")
+	}
+	return nil
+}
 
 type deadpoolConfig struct {
 	// ListenAddr and ListenPort are for the built-in HTTP server for health checks
 	ListenAddr string `yaml:"addr"`
 	ListenPort int    `yaml:"port"`
-	EC2Region  string `yaml:"ec2_region"`
+	Aws awsConfig `yaml:"aws"`
+	Mail *commonlib.MailConfig `yaml:"mail"`
 	// SecretKey is used to prevent random jerks on the Internet from spamming the health-check endpoint
 	SecretKey          string                   `yaml:"secret_key"`
-	AwsAccessKeyId     string                   `yaml:"aws_access_key_id"`
-	AwsSecretAccessKey string                   `yaml:"aws_secret_access_key"`
+	CheckIntervalSeconds int `yaml:"check_interval_seconds"`
+	TimeoutSeconds int `yaml:"timeout_seconds"`
+	LogLevel string `yaml:"log_level"`
 	Checkers           map[string]yaml.MapSlice `yaml:"checkers"`
 }
 
-// gin middleware that assigns a random request ID to each request.
-func reqIdMiddleware(c *gin.Context) {
-	var reqIdBytes []byte
-	for i := 0; i < ReqIdLen; i++ {
-		reqIdBytes = append(reqIdBytes, ReqIdChars[rand.Intn(len(ReqIdChars))])
+func (self *deadpoolConfig) Validate() error {
+	if len(self.ListenAddr) == 0 {
+		return fmt.Errorf("Empty HTTP listening address")
 	}
-	reqId := string(reqIdBytes)
-	c.Set("reqId", reqId)
-	c.Header("Secretshare-ReqId", reqId)
-}
-
-// Returns a logrus entry with fields based on the gin Context.
-//
-// This adds the `reqId` field containing the request ID populated by reqIdMiddleware().
-func logger(c *gin.Context) *log.Entry {
-	reqIdIface, exists := c.Get("reqId")
-	if !exists {
-		return log.WithFields(log.Fields{})
+	if self.ListenPort == 0 {
+		self.ListenPort = 80
 	}
-	reqId, ok := reqIdIface.(string)
-	if !ok {
-		log.Error("reqId is not string")
-		return log.WithFields(log.Fields{})
+	if self.ListenPort < 0 {
+		return fmt.Errorf("Invalid HTTP listening port")
 	}
-	return log.WithFields(log.Fields{
-		"reqId": reqId,
-	})
+	if len(self.SecretKey) == 0 {
+		return fmt.Errorf("Empty HTTP secret key")
+	}
+	if self.CheckIntervalSeconds <= 0 {
+		return fmt.Errorf("Empty or invalid check interval")
+	}
+	if self.TimeoutSeconds <= 0 {
+		return fmt.Errorf("Empty or invalid health-check timeout")
+	}
+	if len(self.Checkers) == 0 {
+		return fmt.Errorf("No checkers specified")
+	}
+	err := self.Aws.Validate()
+	if err != nil {
+		return err
+	}
+	if self.Mail != nil {
+		err = self.Mail.Validate()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func main() {
@@ -99,21 +125,19 @@ func main() {
 			Value: "/etc/deadpool.yaml",
 			Usage: "Configuration file",
 		},
+		cli.BoolFlag{
+			Name:  "dryrun",
+			Usage: "Don't actually restart anything",
+		},
 	}
 	app.Run(os.Args)
 }
 
-type daemonStatus struct {
-	code       int
-	msg        string
-	lastUpdate time.Time
-}
-
-func daemonProc(status *daemonStatus, config deadpoolConfig, svc *ec2.EC2) {
+func loadCheckers(config deadpoolConfig, svc *ec2.EC2) map[string]commonlib.Checker {
 	expectedCheckers := map[string]commonlib.CreateCheckerFunc{
 		"openshift": openshift.Create,
 	}
-	var checkers map[string]commonlib.Checker
+	checkers := make(map[string]commonlib.Checker)
 
 	for name, create := range expectedCheckers {
 		raw, ok := config.Checkers[name]
@@ -124,15 +148,55 @@ func daemonProc(status *daemonStatus, config deadpoolConfig, svc *ec2.EC2) {
 				log.Fatalf("Failed to load checker %s: %s", name, err.Error())
 			}
 			checkers[name] = checker
+			log.Printf("Loaded checker %s", name)
 		}
 	}
+
+	return checkers
+}
+
+type daemonStatus struct {
+	code       int
+	msg        string
+	lastUpdate time.Time
+	mutex *sync.Mutex
+}
+
+func daemonProc(status *daemonStatus, checkers map[string]commonlib.Checker, config deadpoolConfig) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Daemon proc crashed!  %s", r)
+		}
+	}()
+	log.Print("Daemon proc now running...")
 	for {
+		msgs := make([]string, 0)
 		for name, checker := range checkers {
+			log.Debugf("Running checker %s", name)
 			checker.Execute(log.WithFields(log.Fields{
 				"checker": name,
 			}))
+			log.Debugf("Getting status for checker %s", name)
+			status, msg := checker.GetStatus()
+			if !status {
+				log.Debugf("Checker %s failed its health check: %s", name, msg)
+				msgs = append(msgs, msg)
+			}
 		}
-		time.Sleep(30 * time.Second)
+		// Random func to make defer work properly
+		func() {
+			status.mutex.Lock()
+			defer status.mutex.Unlock()
+			if len(msgs) > 0 {
+				status.code = 500
+				status.msg = strings.Join(msgs, "\n")
+			} else {
+				status.code = 200
+				status.msg = "OK"
+			}
+		}()
+		status.lastUpdate = time.Now()
+		time.Sleep(time.Duration(config.CheckIntervalSeconds) * time.Second)
 	}
 }
 
@@ -159,25 +223,68 @@ func runServer(c *cli.Context) {
 		if len(config.ListenAddr) == 0 {
 			config.ListenAddr = "0.0.0.0"
 		}
+
+		if config.TimeoutSeconds - config.CheckIntervalSeconds < 10 {
+			log.Fatal("timeout_seconds must be at least 10 more than check_interval_seconds")
+		}
+
+		err = config.Validate()
+		if err != nil {
+			log.Fatalf("Invalid configuration: %s", err.Error())
+		}
 	}
+	commonlib.DRYRUN = c.Bool("dryrun")
+	commonlib.Mail = config.Mail
+	if config.LogLevel == "panic" {
+		log.SetLevel(log.PanicLevel)
+	} else if config.LogLevel == "fatal" {
+		log.SetLevel(log.FatalLevel)
+	} else if config.LogLevel == "error" {
+		log.SetLevel(log.ErrorLevel)
+	} else if config.LogLevel == "warning" {
+		log.SetLevel(log.WarnLevel)
+	} else if config.LogLevel == "info" {
+		log.SetLevel(log.InfoLevel)
+	} else if config.LogLevel == "debug" {
+		log.SetLevel(log.DebugLevel)
+	}
+	log.Debug("Read config")
 
 	sess := session.New(&aws.Config{
-		Region:      aws.String(config.EC2Region),
-		Credentials: credentials.NewStaticCredentials(config.AwsAccessKeyId, config.AwsSecretAccessKey, ""),
+		Region:      aws.String(config.Aws.Region),
+		Credentials: credentials.NewStaticCredentials(config.Aws.AccessKeyId, config.Aws.SecretAccessKey, ""),
 	})
 	svc := ec2.New(sess)
+
+	checkers := loadCheckers(config, svc)
 
 	status := daemonStatus{
 		code:       400,
 		msg:        "Not running yet",
 		lastUpdate: time.Now(),
+		mutex: &sync.Mutex{},
 	}
 
-	go daemonProc(&status, config, svc)
+	go daemonProc(&status, checkers, config)
 
+	log.Printf("Starting HTTP server on %s:%d...", config.ListenAddr, config.ListenPort)
 	r := gin.Default()
-	r.Use(reqIdMiddleware)
 	r.GET("/health", func(c *gin.Context) {
+		authHeader := c.Request.Header.Get("Authorization")
+		if authHeader != config.SecretKey {
+			c.String(http.StatusUnauthorized, "Bad or missing Authorization header")
+			return
+		}
+		status.mutex.Lock()
+		defer status.mutex.Unlock()
+		if time.Now().Sub(status.lastUpdate) > time.Duration(config.TimeoutSeconds) * time.Second {
+			c.String(http.StatusInternalServerError, "Checker goroutine not running")
+			return
+		}
+		if status.code != 200 {
+			c.String(status.code, status.msg)
+			return
+		}
 		c.String(http.StatusOK, "OK")
 	})
 
