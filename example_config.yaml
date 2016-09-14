@@ -1,0 +1,48 @@
+addr: '0.0.0.0'
+port: 8080
+secret_key: THISISABADKEYPLEASECHANGEIT
+mail:
+  host: mail.example.com
+  port: 587
+  sender: root@example.com
+  recipient: ops@example.com
+  starttls: true
+  auth:
+    username: mailuser
+    password: thisisareallybadpassword
+aws:
+  region: us-east-1
+  access_key_id: "AKIATHISISAKEYID"
+  secret_access_key: "secretaccesskeygoeshere"
+check_interval_seconds: 30
+# Don't make timeout_seconds too short; the checker
+# goroutine's heartbeat stops while it's restarting a node.
+timeout_seconds: 300
+# The default is fine for log_level.
+# Valid options are:
+# - panic
+# - fatal
+# - error
+# - warning
+# - info
+# - debug
+# The "debug" level is VERY chatty.
+# log_level: debug
+checkers:
+  openshift:
+    token: "openshiftserviceaccounttokengoeshere"
+    host: openshift.example.com
+    # You only need this if your OpenShift instance's SSL certificate
+    # is signed by a private CA.
+    # ca_cert_file: /path/to/cacert.pem
+    port: 8443
+    node_matchers:
+      - labels:
+          type: prod
+      - labels:
+          type: compute
+    # Use this section to force deadpool to consider a particular EC2 instance
+    # to be unrepsonsive.
+    # testing:
+    #   force_not_ready:
+    #     - ip-172-31-33-236.us-west-1.compute.internal
