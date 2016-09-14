@@ -12,9 +12,21 @@ You will need to run the server as an appropriately privileged user.  The privil
 
 See example_config.yaml for reference.  It is fairly extensively commented.  Adjust it to suit your needs, then save it as `/etc/deadpool.yaml`.
 
+### Running
+
+If you have your configuration file saved as `/etc/deadpool.yaml`, then just run `deadpool`.  If not, then run `deadpool --config /path/to/config/file`.  You can also run with `--dryrun` to prevent it from making changes to EC2 instances.
+
 ### Health Check
 
 To hit the health check endpoint, do this: `curl -H "Authorization: $SECRET_KEY" http://deadpool.example.com/health`.  `$SECRET_KEY` should match the `secret_key` you set in the configuration file.
+
+## Building
+
+deadpool uses [glide](https://glide.sh/) to wrangle dependencies.  Install it first.
+
+To install dependencies, just run `glide install`.
+
+To build, run `make` (or `make linux|osx|windows` to build for just one platform).
 
 ## Thanks
 
