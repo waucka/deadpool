@@ -282,22 +282,28 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 			continue
 		}
 		if !ok {
-			logger.Infof("Node %s is not ready!", node.Metadata.Name)
-			err = commonlib.RestartInstance(self.svc, *instance.InstanceId)
+			openshiftName := node.Metadata.Name
+			ec2Id := *instance.InstanceId
+			ec2Name, err := commonlib.GetInstanceName(instance)
 			if err != nil {
-				logger.Errorf("Failed to restart node %s (instance %s): %s", node.Metadata.Name, *instance.InstanceId, err.Error())
+				ec2Name = ec2Id
+			}
+			logger.Infof("Node %s is not ready!", node.Metadata.Name)
+			err = commonlib.RestartInstance(self.svc, ec2Id)
+			if err != nil {
+				logger.Errorf("Failed to restart node %s (instance %s): %s", openshiftName, ec2Id, err.Error())
 				if err == commonlib.ErrInstanceTerminated {
-					logger.Errorf("Node %s (instance %s) was terminated, so this is probably not a problem.", node.Metadata.Name, *instance.InstanceId, err.Error())
+					logger.Errorf("Node %s (instance %s) was terminated, so this is probably not a problem.", openshiftName, ec2Id, err.Error())
 				} else {
 					self.nodeErrors[node.Metadata.Name] = err
 				}
-				mailErr := commonlib.SendMail(fmt.Sprintf("Failed to restart OpenShift node %s (EC2 instance %s)", node.Metadata.Name, *instance.InstanceId), err.Error())
+				mailErr := commonlib.SendMail(fmt.Sprintf("Failed to restart OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), err.Error())
 				if mailErr != nil {
 					log.Errorf("Failed to send email: %s", mailErr.Error())
 				}
 			} else {
-				logger.Infof("Node %s (instance %s) has been restarted.", node.Metadata.Name, *instance.InstanceId)
-				mailErr := commonlib.SendMail(fmt.Sprintf("Restarted OpenShift node %s (EC2 instance %s)", node.Metadata.Name, *instance.InstanceId), "Does a DNS entry need to be updated?")
+				logger.Infof("Node %s (instance %s) has been restarted.", openshiftName, ec2Id)
+				mailErr := commonlib.SendMail(fmt.Sprintf("Restarted OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), "Does a DNS entry need to be updated?")
 				if mailErr != nil {
 					log.Errorf("Failed to send email: %s", mailErr.Error())
 				}

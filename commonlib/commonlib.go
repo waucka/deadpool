@@ -39,6 +39,8 @@ var (
 	ErrStopTimeout         = errors.New("Instance failed to stop within 5 minutes")
 	ErrInstanceTerminated  = errors.New("Instance was terminated")
 
+	ErrNamelessInstance    = errors.New("Instance has no name")
+
 	instancePending int64 = 0
 	instanceRunning int64 = 16
 	instanceShuttingDown int64 = 32
@@ -123,6 +125,15 @@ func DescribeOneInstance(svc *ec2.EC2, params *ec2.DescribeInstancesInput) (*ec2
 		return nil, ErrNoSuchInstance
 	}
 	return resv.Instances[0], nil
+}
+
+func GetInstanceName(instance *ec2.Instance) (string, error) {
+	for _, tag := range instance.Tags {
+		if *tag.Key == "Name" {
+			return *tag.Value, nil
+		}
+	}
+	return "", ErrNamelessInstance
 }
 
 func stopInstance(svc *ec2.EC2, id string) error {
