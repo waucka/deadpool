@@ -44,6 +44,8 @@ checkers:
     # If simulate is true, then nodes will not actually be restarted, but
     # emails indicating which nodes would have been restarted will be sent out.
     simulate: False
+    # This is the number of seconds to wait for a restarted node to become available again.
+    restart_timeout: 300
     # Use this section to force deadpool to consider a particular EC2 instance
     # to be unrepsonsive.
     # testing:

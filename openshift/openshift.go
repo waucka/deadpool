@@ -51,19 +51,20 @@ type TestingConfig struct {
 }
 
 type OpenShiftChecker struct {
-	AccessToken  string               `yaml:"token"`
-	Host         string               `yaml:"host"`
-	Port         int                  `yaml:"port"`
-	CaCertFile   string               `yaml:"ca_cert_file"`
-	NodeMatchers []NodeMatcher        `yaml:"node_matchers"`
-	Testing      TestingConfig        `yaml:"testing"`
-	Simulate     bool                 `yaml:"simulate"`
-	client       *http.Client         `yaml:"-"`
-	svc          *ec2.EC2             `yaml:"-"`
-	nodesUrl     string               `yaml:"-"`
-	errors       map[string]error     `yaml:"-"`
-	nodeErrors   map[string]error     `yaml:"-"`
-	nodeAges     map[string]time.Time `yaml:"-"`
+	AccessToken    string               `yaml:"token"`
+	Host           string               `yaml:"host"`
+	Port           int                  `yaml:"port"`
+	CaCertFile     string               `yaml:"ca_cert_file"`
+	NodeMatchers   []NodeMatcher        `yaml:"node_matchers"`
+	Testing        TestingConfig        `yaml:"testing"`
+	Simulate       bool                 `yaml:"simulate"`
+	RestartTimeout int                  `yaml:"restart_timeout"`
+	client         *http.Client         `yaml:"-"`
+	svc            *ec2.EC2             `yaml:"-"`
+	nodesUrl       string               `yaml:"-"`
+	errors         map[string]error     `yaml:"-"`
+	nodeErrors     map[string]error     `yaml:"-"`
+	nodeAges       map[string]time.Time `yaml:"-"`
 }
 
 func (self *OpenShiftChecker) Validate() error {
@@ -107,12 +108,39 @@ type NodeInfo struct {
 	Status   NodeStatus   `json:"status"`
 }
 
-type NodeInfoResponse struct {
+type NodeListResponse struct {
 	Kind  string     `json:"kind"`
 	Items []NodeInfo `json:"items"`
 }
 
-func (self *OpenShiftChecker) isNodeReady(node NodeInfo) (bool, error) {
+type NodeResponse struct {
+	Kind     string       `json:"kind"`
+	Metadata NodeMetadata `json:"metadata"`
+	Status   NodeStatus   `json:"status"`
+}
+
+// This interface annoys me, but I can't see a way to get
+// a decent representation of both a node in a multi-node
+// response and the one node in a single-node response
+// without removing Kind from NodeResponse.  Which I don't
+// want to do, since it acts as a sort of sanity check.
+type Node interface {
+	Info() *NodeInfo
+}
+
+func (self *NodeInfo) Info() *NodeInfo {
+	return self
+}
+
+func (self *NodeResponse) Info() *NodeInfo {
+	return &NodeInfo{
+		Metadata: self.Metadata,
+		Status: self.Status,
+	}
+}
+
+func (self *OpenShiftChecker) isNodeReady(checkNode Node) (bool, error) {
+	node := checkNode.Info()
 	if len(self.Testing.ForceNotReady) > 0 {
 		for _, name := range self.Testing.ForceNotReady {
 			if node.Metadata.Name == name {
@@ -196,6 +224,45 @@ func (self *OpenShiftChecker) matchNode(instance *ec2.Instance, node NodeInfo) (
 	return false, nil
 }
 
+func (self *OpenShiftChecker) getNodeReadiness(nodeName string) (bool, error) {
+	url := fmt.Sprintf("%s/%s", self.nodesUrl, nodeName)
+	log.Debugf("Fetching %s", url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Errorf("Failed to contact OpenShift: %s", err.Error())
+		return false, err
+	}
+	req.Header.Add("Authorization", "Bearer "+self.AccessToken)
+	req.Header.Add("Accept", "application/json")
+	resp, err := self.client.Do(req)
+	if err != nil {
+		log.Errorf("Failed to contact OpenShift: %s", err.Error())
+		return false, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("OpenShift returned HTTP status code %s", resp.StatusCode)
+		log.Errorf(err.Error())
+		return false, err
+	}
+	log.Debugf("GET %s %d", self.nodesUrl, resp.StatusCode)
+
+	if resp.Body == nil {
+		err = fmt.Errorf("Unexpected empty response from OpenShift")
+		log.Error(err.Error())
+		return false, err
+	}
+	defer resp.Body.Close()
+	dec := json.NewDecoder(resp.Body)
+	var nodeInfoResp NodeResponse
+	err = dec.Decode(&nodeInfoResp)
+	if err != nil || nodeInfoResp.Kind != "Node" {
+		log.Errorf("Failed to decode response from OpenShift: %s", err.Error())
+		return false, err
+	}
+
+	return self.isNodeReady(&nodeInfoResp)
+}
+
 func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 	logger.Debugf("Fetching %s", self.nodesUrl)
 	req, err := http.NewRequest("GET", self.nodesUrl, nil)
@@ -232,7 +299,7 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 	self.errors["contact-openshift"] = nil
 	defer resp.Body.Close()
 	dec := json.NewDecoder(resp.Body)
-	var nodeInfoResp NodeInfoResponse
+	var nodeInfoResp NodeListResponse
 	err = dec.Decode(&nodeInfoResp)
 	if err != nil || nodeInfoResp.Kind != "NodeList" {
 		logger.Errorf("Failed to decode response from OpenShift: %s", err.Error())
@@ -276,7 +343,7 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 		}
 
 		logger.Debugf("Checking if node %s is ready", node.Metadata.Name)
-		ok, err := self.isNodeReady(node)
+		ok, err := self.isNodeReady(&node)
 		if err != nil {
 			logger.Errorf("Failed to determine readiness of node %s: %s", node.Metadata.Name, err.Error())
 			self.nodeErrors[node.Metadata.Name] = err
@@ -292,6 +359,25 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 			logger.Infof("Node %s is not ready!", node.Metadata.Name)
 			if !self.Simulate {
 				err = commonlib.RestartInstance(self.svc, ec2Id)
+				if err == nil {
+					restartSucceeded := false
+					start := time.Now()
+					for time.Now().Sub(start) < time.Duration(self.RestartTimeout) {
+						ok, err := self.getNodeReadiness(node.Metadata.Name)
+						if err != nil {
+							logger.Errorf("Failed to determine readiness of node %s: %s", node.Metadata.Name, err.Error())
+							// Don't set self.NodeErrors here; weird stuff might happen between shutdown and startup.
+							// Just log any errors.
+						}
+						if ok {
+							restartSucceeded = true
+							break
+						}
+					}
+					if !restartSucceeded {
+						err = fmt.Errorf("Node failed to become ready after restarting")
+					}
+				}
 			}
 			if err != nil {
 				logger.Errorf("Failed to restart node %s (instance %s): %s", openshiftName, ec2Id, err.Error())
