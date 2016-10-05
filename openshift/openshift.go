@@ -17,15 +17,15 @@ package openshift
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import (
-	"encoding/json"
-	"fmt"
-	"time"
-	"errors"
-	"strings"
-	"net/http"
-	"io/ioutil"
-	"crypto/x509"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"strings"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
@@ -37,13 +37,13 @@ import (
 var (
 	ErrUnexpectedReadyStatus = errors.New("Unexpected status field in \"Ready\" condition")
 	ErrNoReadyCondition      = errors.New("Node did not report readiness")
-	ErrEC2LookupFailed = errors.New("Failed to look up node info in EC2")
-	ErrBadCaCert = errors.New("Failed to load CA certificate")
+	ErrEC2LookupFailed       = errors.New("Failed to look up node info in EC2")
+	ErrBadCaCert             = errors.New("Failed to load CA certificate")
 )
 
 type NodeMatcher struct {
-	EC2NamePrefix string `yaml:"name_prefix,omitempty"`
-	Labels map[string]string `yaml:"labels,omitempty"`
+	EC2NamePrefix string            `yaml:"name_prefix,omitempty"`
+	Labels        map[string]string `yaml:"labels,omitempty"`
 }
 
 type TestingConfig struct {
@@ -51,19 +51,19 @@ type TestingConfig struct {
 }
 
 type OpenShiftChecker struct {
-	AccessToken string       `yaml:"token"`
-	Host         string       `yaml:"host"`
-	Port int `yaml:"port"`
-	CaCertFile string `yaml:"ca_cert_file"`
-	NodeMatchers []NodeMatcher `yaml:"node_matchers"`
-	Testing TestingConfig `yaml:"testing"`
-	Simulate bool `yaml:"simulate"`
-	client      *http.Client `yaml:"-"`
-	svc         *ec2.EC2     `yaml:"-"`
-	nodesUrl string `yaml:"-"`
-	errors map[string]error `yaml:"-"`
-	nodeErrors map[string]error `yaml:"-"`
-	nodeAges map[string]time.Time `yaml:"-"`
+	AccessToken  string               `yaml:"token"`
+	Host         string               `yaml:"host"`
+	Port         int                  `yaml:"port"`
+	CaCertFile   string               `yaml:"ca_cert_file"`
+	NodeMatchers []NodeMatcher        `yaml:"node_matchers"`
+	Testing      TestingConfig        `yaml:"testing"`
+	Simulate     bool                 `yaml:"simulate"`
+	client       *http.Client         `yaml:"-"`
+	svc          *ec2.EC2             `yaml:"-"`
+	nodesUrl     string               `yaml:"-"`
+	errors       map[string]error     `yaml:"-"`
+	nodeErrors   map[string]error     `yaml:"-"`
+	nodeAges     map[string]time.Time `yaml:"-"`
 }
 
 func (self *OpenShiftChecker) Validate() error {
@@ -85,7 +85,7 @@ func (self *OpenShiftChecker) Validate() error {
 // Since we don't need much of the data from the response, these
 // structures don't represent the full JSON
 type NodeMetadata struct {
-	Name string `json:"name"`
+	Name   string            `json:"name"`
 	Labels map[string]string `json:"labels"`
 }
 
@@ -244,7 +244,7 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 	// Purge old node error records
 	logger.Debug("Purging old per-node error records...")
 	for nodeName, lastSeen := range self.nodeAges {
-		if now.Sub(lastSeen) > 5 * time.Minute {
+		if now.Sub(lastSeen) > 5*time.Minute {
 			delete(self.nodeAges, nodeName)
 			delete(self.nodeErrors, nodeName)
 		}
@@ -350,10 +350,10 @@ func (self *OpenShiftChecker) lookupInstance(nodeName string) (*ec2.Instance, er
 
 func Create(svc *ec2.EC2, raw yaml.MapSlice) (commonlib.Checker, error) {
 	checker := &OpenShiftChecker{
-		svc: svc,
-		errors: make(map[string]error),
+		svc:        svc,
+		errors:     make(map[string]error),
 		nodeErrors: make(map[string]error),
-		nodeAges: make(map[string]time.Time),
+		nodeAges:   make(map[string]time.Time),
 	}
 
 	// DEAR GOD THIS IS HIDEOUS

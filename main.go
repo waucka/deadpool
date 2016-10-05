@@ -22,9 +22,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
-	"time"
-	"sync"
 	"strings"
+	"sync"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
@@ -46,9 +46,9 @@ var (
 )
 
 type awsConfig struct {
-	Region  string `yaml:"region"`
-	AccessKeyId     string                   `yaml:"access_key_id"`
-	SecretAccessKey string                   `yaml:"secret_access_key"`
+	Region          string `yaml:"region"`
+	AccessKeyId     string `yaml:"access_key_id"`
+	SecretAccessKey string `yaml:"secret_access_key"`
 }
 
 func (self *awsConfig) Validate() error {
@@ -66,16 +66,16 @@ func (self *awsConfig) Validate() error {
 
 type deadpoolConfig struct {
 	// ListenAddr and ListenPort are for the built-in HTTP server for health checks
-	ListenAddr string `yaml:"addr"`
-	ListenPort int    `yaml:"port"`
-	Aws awsConfig `yaml:"aws"`
-	Mail *commonlib.MailConfig `yaml:"mail"`
+	ListenAddr string                `yaml:"addr"`
+	ListenPort int                   `yaml:"port"`
+	Aws        awsConfig             `yaml:"aws"`
+	Mail       *commonlib.MailConfig `yaml:"mail"`
 	// SecretKey is used to prevent random jerks on the Internet from spamming the health-check endpoint
-	SecretKey          string                   `yaml:"secret_key"`
-	CheckIntervalSeconds int `yaml:"check_interval_seconds"`
-	TimeoutSeconds int `yaml:"timeout_seconds"`
-	LogLevel string `yaml:"log_level"`
-	Checkers           map[string]yaml.MapSlice `yaml:"checkers"`
+	SecretKey            string                   `yaml:"secret_key"`
+	CheckIntervalSeconds int                      `yaml:"check_interval_seconds"`
+	TimeoutSeconds       int                      `yaml:"timeout_seconds"`
+	LogLevel             string                   `yaml:"log_level"`
+	Checkers             map[string]yaml.MapSlice `yaml:"checkers"`
 }
 
 func (self *deadpoolConfig) Validate() error {
@@ -159,7 +159,7 @@ type daemonStatus struct {
 	code       int
 	msg        string
 	lastUpdate time.Time
-	mutex *sync.Mutex
+	mutex      *sync.Mutex
 }
 
 func daemonProc(status *daemonStatus, checkers map[string]commonlib.Checker, config deadpoolConfig) {
@@ -224,7 +224,7 @@ func runServer(c *cli.Context) {
 			config.ListenAddr = "0.0.0.0"
 		}
 
-		if config.TimeoutSeconds - config.CheckIntervalSeconds < 10 {
+		if config.TimeoutSeconds-config.CheckIntervalSeconds < 10 {
 			log.Fatal("timeout_seconds must be at least 10 more than check_interval_seconds")
 		}
 
@@ -262,7 +262,7 @@ func runServer(c *cli.Context) {
 		code:       400,
 		msg:        "Not running yet",
 		lastUpdate: time.Now(),
-		mutex: &sync.Mutex{},
+		mutex:      &sync.Mutex{},
 	}
 
 	go daemonProc(&status, checkers, config)
@@ -277,7 +277,7 @@ func runServer(c *cli.Context) {
 		}
 		status.mutex.Lock()
 		defer status.mutex.Unlock()
-		if time.Now().Sub(status.lastUpdate) > time.Duration(config.TimeoutSeconds) * time.Second {
+		if time.Now().Sub(status.lastUpdate) > time.Duration(config.TimeoutSeconds)*time.Second {
 			c.String(http.StatusInternalServerError, "Checker goroutine not running")
 			return
 		}

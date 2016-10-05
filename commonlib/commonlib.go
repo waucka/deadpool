@@ -17,13 +17,13 @@ package commonlib
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import (
-	"io"
-	"os"
-	"fmt"
-	"errors"
-	"time"
-	"net/smtp"
 	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
+	"net/smtp"
+	"os"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
@@ -39,14 +39,14 @@ var (
 	ErrStopTimeout         = errors.New("Instance failed to stop within 5 minutes")
 	ErrInstanceTerminated  = errors.New("Instance was terminated")
 
-	ErrNamelessInstance    = errors.New("Instance has no name")
+	ErrNamelessInstance = errors.New("Instance has no name")
 
-	instancePending int64 = 0
-	instanceRunning int64 = 16
+	instancePending      int64 = 0
+	instanceRunning      int64 = 16
 	instanceShuttingDown int64 = 32
-	instanceTerminated int64 = 48
-	instanceStopping int64 = 64
-	instanceStopped int64 = 80
+	instanceTerminated   int64 = 48
+	instanceStopping     int64 = 64
+	instanceStopped      int64 = 80
 
 	Mail *MailConfig = nil
 
@@ -69,12 +69,12 @@ func (self *MailPlainAuth) Validate() error {
 }
 
 type MailConfig struct {
-	Host string `yaml:"host"`
-	Port int `yaml:"port"`
-	StartTLS bool `yaml:"starttls"`
-	Sender string `yaml:"sender"`
-	Recipient string `yaml:"recipient"`
-	Auth *MailPlainAuth `yaml:"auth"`
+	Host      string         `yaml:"host"`
+	Port      int            `yaml:"port"`
+	StartTLS  bool           `yaml:"starttls"`
+	Sender    string         `yaml:"sender"`
+	Recipient string         `yaml:"recipient"`
+	Auth      *MailPlainAuth `yaml:"auth"`
 }
 
 func (self *MailConfig) Validate() error {
