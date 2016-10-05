@@ -57,6 +57,7 @@ type OpenShiftChecker struct {
 	CaCertFile string `yaml:"ca_cert_file"`
 	NodeMatchers []NodeMatcher `yaml:"node_matchers"`
 	Testing TestingConfig `yaml:"testing"`
+	Simulate bool `yaml:"simulate"`
 	client      *http.Client `yaml:"-"`
 	svc         *ec2.EC2     `yaml:"-"`
 	nodesUrl string `yaml:"-"`
@@ -289,7 +290,9 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 				ec2Name = ec2Id
 			}
 			logger.Infof("Node %s is not ready!", node.Metadata.Name)
-			err = commonlib.RestartInstance(self.svc, ec2Id)
+			if !self.Simulate {
+				err = commonlib.RestartInstance(self.svc, ec2Id)
+			}
 			if err != nil {
 				logger.Errorf("Failed to restart node %s (instance %s): %s", openshiftName, ec2Id, err.Error())
 				if err == commonlib.ErrInstanceTerminated {
@@ -302,8 +305,20 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 					log.Errorf("Failed to send email: %s", mailErr.Error())
 				}
 			} else {
-				logger.Infof("Node %s (instance %s) has been restarted.", openshiftName, ec2Id)
-				mailErr := commonlib.SendMail(fmt.Sprintf("Restarted OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), "Does a DNS entry need to be updated?")
+				var logMsg string
+				var mailSubject string
+				var mailMsg string
+				if self.Simulate {
+					logMsg = "Node %s (instance %s) would be restarted."
+					mailSubject = "Would have restarted OpenShift node %s (EC2 instance %s)"
+					mailMsg = "Maybe you should restart it?"
+				} else {
+					logMsg = "Node %s (instance %s) has been restarted."
+					mailSubject = "Restarted OpenShift node %s (EC2 instance %s)"
+					mailMsg = "Does a DNS entry need to be updated?"
+				}
+				logger.Infof(logMsg, openshiftName, ec2Id)
+				mailErr := commonlib.SendMail(fmt.Sprintf(mailSubject, openshiftName, ec2Name), mailMsg)
 				if mailErr != nil {
 					log.Errorf("Failed to send email: %s", mailErr.Error())
 				}

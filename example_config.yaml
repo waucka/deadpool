@@ -41,6 +41,9 @@ checkers:
           type: prod
       - labels:
           type: compute
+    # If simulate is true, then nodes will not actually be restarted, but
+    # emails indicating which nodes would have been restarted will be sent out.
+    simulate: False
     # Use this section to force deadpool to consider a particular EC2 instance
     # to be unrepsonsive.
     # testing:
