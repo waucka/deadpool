@@ -94,9 +94,9 @@ func (self *Route53Updater) SetDNS(instance *ec2.Instance) error {
 	}
 	_, err = self.svc.ChangeResourceRecordSets(params)
 	if err != nil {
-		self.logger.Infof("Set DNS: A %s %s", fqdn, *instance.PublicIpAddress)
-	} else {
 		self.logger.Errorf("Failed to set DNS: A %s %s (%s)", fqdn, *instance.PublicIpAddress, err.Error())
+	} else {
+		self.logger.Infof("Set DNS: A %s %s", fqdn, *instance.PublicIpAddress)
 	}
 	return err
 }
