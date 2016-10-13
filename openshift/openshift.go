@@ -240,7 +240,7 @@ func (self *OpenShiftChecker) getNodeReadiness(nodeName string) (bool, error) {
 		return false, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("OpenShift returned HTTP status code %s", resp.StatusCode)
+		err = fmt.Errorf("OpenShift returned HTTP status code %d", resp.StatusCode)
 		log.Errorf(err.Error())
 		return false, err
 	}
@@ -282,7 +282,7 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 	}
 	self.errors["contact-openshift"] = nil
 	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("OpenShift returned HTTP status code %s", resp.StatusCode)
+		err = fmt.Errorf("OpenShift returned HTTP status code %d", resp.StatusCode)
 		logger.Errorf(err.Error())
 		self.errors["contact-openshift"] = err
 		return
