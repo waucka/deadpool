@@ -378,6 +378,16 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 						err = fmt.Errorf("Node failed to become ready after restarting")
 					}
 				}
+				// I don't like the fact that each checker plugin needs to do the restart
+				// and DNS change itself.  There should be one function that calls both.
+				dnsErr := commonlib.SetDNS(self.svc, ec2Id)
+				if dnsErr != nil {
+					logger.Errorf("Failed to set DNS for node %s (instance %s): %s", openshiftName, ec2Id, dnsErr.Error())
+					mailErr := commonlib.SendMail(fmt.Sprintf("Failed to set DNS for OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), dnsErr.Error())
+					if mailErr != nil {
+						log.Errorf("Failed to send email: %s", mailErr.Error())
+					}
+				}
 			}
 			if err != nil {
 				logger.Errorf("Failed to restart node %s (instance %s): %s", openshiftName, ec2Id, err.Error())

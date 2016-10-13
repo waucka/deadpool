@@ -51,3 +51,15 @@ checkers:
     # testing:
     #   force_not_ready:
     #     - ip-172-31-33-236.us-west-1.compute.internal
+
+# Only one DNS plugin can be used at a time
+dns:
+  route53:
+    # Domain to add names to
+    domain: example.com
+    # TTL for new records (will also change existing records' TTLs when updating)
+    ttl: 300
+    # If simulate is true, then DNS changes will only be logged, not actually made.
+    simulate: False
+
+    

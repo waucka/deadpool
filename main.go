@@ -38,6 +38,9 @@ import (
 
 	// Checkers
 	"github.com/waucka/deadpool/openshift"
+
+	// DNS Updaters
+	"github.com/waucka/deadpool/dns/route53"
 )
 
 var (
@@ -76,6 +79,7 @@ type deadpoolConfig struct {
 	TimeoutSeconds       int                      `yaml:"timeout_seconds"`
 	LogLevel             string                   `yaml:"log_level"`
 	Checkers             map[string]yaml.MapSlice `yaml:"checkers"`
+	DNSUpdaters          map[string]yaml.MapSlice `yaml:"dns"`
 }
 
 func (self *deadpoolConfig) Validate() error {
@@ -99,6 +103,9 @@ func (self *deadpoolConfig) Validate() error {
 	}
 	if len(self.Checkers) == 0 {
 		return fmt.Errorf("No checkers specified")
+	}
+	if len(self.DNSUpdaters) > 1 {
+		return fmt.Errorf("Only one DNS updater can be used at a time")
 	}
 	err := self.Aws.Validate()
 	if err != nil {
@@ -153,6 +160,28 @@ func loadCheckers(config deadpoolConfig, svc *ec2.EC2) map[string]commonlib.Chec
 	}
 
 	return checkers
+}
+
+func loadDNSUpdater(config deadpoolConfig, sess *session.Session) commonlib.DNSUpdater {
+	expectedUpdaters := map[string]commonlib.CreateDNSUpdaterFunc{
+		"route53": route53.Create,
+	}
+	var updater commonlib.DNSUpdater = nil
+
+	for name, create := range expectedUpdaters {
+		raw, ok := config.DNSUpdaters[name]
+		if ok {
+			var err error
+			log.Printf("Loading DNS updater %s", name)
+			updater, err = create(sess, raw)
+			if err != nil {
+				log.Fatalf("Failed to load DNS updater %s: %s", name, err.Error())
+			}
+			log.Printf("Loaded DNS updater %s", name)
+		}
+	}
+
+	return updater
 }
 
 type daemonStatus struct {
@@ -257,6 +286,7 @@ func runServer(c *cli.Context) {
 	svc := ec2.New(sess)
 
 	checkers := loadCheckers(config, svc)
+	commonlib.DNSUpdaterInstance = loadDNSUpdater(config, sess)
 
 	status := daemonStatus{
 		code:       400,

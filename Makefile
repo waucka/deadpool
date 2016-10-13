@@ -1,5 +1,7 @@
 #GOFLAGS=-gcflags '-N -l'
 
+GOFILES=main.go commonlib/commonlib.go openshift/openshift.go dns/route53/route53.go
+
 all: linux osx windows
 
 linux: build/linux-amd64/deadpool
@@ -9,15 +11,15 @@ osx: build/osx-amd64/deadpool
 windows: build/win-amd64/deadpool.exe
 
 # Linux Build
-build/linux-amd64/deadpool: main.go commonlib/commonlib.go openshift/openshift.go
+build/linux-amd64/deadpool: $(GOFILES)
 	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -o $@ github.com/waucka/deadpool
 
 # OS X Build
-build/osx-amd64/deadpool: main.go commonlib/commonlib.go openshift/openshift.go
+build/osx-amd64/deadpool: $(GOFILES)
 	GOOS=darwin GOARCH=amd64 go build $(GOFLAGS) -o $@ github.com/waucka/deadpool
 
 # Windows Build
-build/win-amd64/deadpool.exe: main.go commonlib/commonlib.go openshift/openshift.go
+build/win-amd64/deadpool.exe: $(GOFILES)
 	GOOS=windows GOARCH=amd64 go build $(GOFLAGS) -o $@ github.com/waucka/deadpool
 
 clean:

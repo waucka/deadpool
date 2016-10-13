@@ -27,6 +27,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"gopkg.in/yaml.v2"
 )
@@ -38,6 +39,7 @@ var (
 	ErrStartTimeout        = errors.New("Instance failed to start within 1 minute")
 	ErrStopTimeout         = errors.New("Instance failed to stop within 5 minutes")
 	ErrInstanceTerminated  = errors.New("Instance was terminated")
+	ErrInstanceNotRunning  = errors.New("Instance is not running")
 
 	ErrNamelessInstance = errors.New("Instance has no name")
 
@@ -49,6 +51,7 @@ var (
 	instanceStopped      int64 = 80
 
 	Mail *MailConfig = nil
+	DNSUpdaterInstance DNSUpdater = nil
 
 	DRYRUN = false
 )
@@ -105,6 +108,12 @@ type Checker interface {
 }
 
 type CreateCheckerFunc func(*ec2.EC2, yaml.MapSlice) (Checker, error)
+
+type DNSUpdater interface {
+	SetDNS(*ec2.Instance) error
+}
+
+type CreateDNSUpdaterFunc func(*session.Session, yaml.MapSlice) (DNSUpdater, error)
 
 func DescribeOneInstance(svc *ec2.EC2, params *ec2.DescribeInstancesInput) (*ec2.Instance, error) {
 	resp, err := svc.DescribeInstances(params)
@@ -339,5 +348,27 @@ func RestartInstance(svc *ec2.EC2, id string) error {
 	log.Printf("EC2 instance %s started", id)
 	// Sleep for 30 seconds to let the instance start services
 	time.Sleep(30 * time.Second)
+	return nil
+}
+
+func SetDNS(svc *ec2.EC2, id string) error {
+	if DNSUpdaterInstance != nil {
+		descParams := &ec2.DescribeInstancesInput{
+			InstanceIds: []*string{
+				&id,
+			},
+			DryRun: aws.Bool(false),
+		}
+
+		// Check to see if the instance is already stopped
+		instance, err := DescribeOneInstance(svc, descParams)
+		if err != nil {
+			return err
+		}
+		if *instance.State.Code == instanceStopped || *instance.State.Code == instanceTerminated {
+			return ErrInstanceNotRunning
+		}
+		return DNSUpdaterInstance.SetDNS(instance)
+	}
 	return nil
 }
