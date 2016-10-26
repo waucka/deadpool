@@ -135,7 +135,7 @@ func (self *NodeInfo) Info() *NodeInfo {
 func (self *NodeResponse) Info() *NodeInfo {
 	return &NodeInfo{
 		Metadata: self.Metadata,
-		Status: self.Status,
+		Status:   self.Status,
 	}
 }
 
