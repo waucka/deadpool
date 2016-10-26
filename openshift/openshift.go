@@ -357,6 +357,19 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 				ec2Name = ec2Id
 			}
 			logger.Infof("Node %s is not ready!", node.Metadata.Name)
+			{
+				jsonBytes, err := json.Marshal(&node)
+				if err != nil {
+					logger.Errorf("Failed to JSONify node %s: %s", node.Metadata.Name, err.Error())
+				} else {
+					logger.WithFields(log.Fields{
+						"object_dump": true,
+						"object_type": "node",
+						"object_name": node.Metadata.Name,
+						"dump_format": "application/json",
+					}).Debug(string(jsonBytes))
+				}
+			}
 			if !self.Simulate {
 				err = commonlib.RestartInstance(self.svc, ec2Id)
 				if err == nil {
