@@ -263,6 +263,77 @@ func (self *OpenShiftChecker) getNodeReadiness(nodeName string) (bool, error) {
 	return self.isNodeReady(&nodeInfoResp)
 }
 
+func (self *OpenShiftChecker) restartNode(logger *log.Entry, instance *ec2.Instance, node *NodeInfo) {
+	openshiftName := node.Metadata.Name
+	ec2Id := *instance.InstanceId
+	ec2Name, err := commonlib.GetInstanceName(instance)
+	if err != nil {
+		ec2Name = ec2Id
+	}
+	if !self.Simulate {
+		err = commonlib.RestartInstance(self.svc, ec2Id)
+		if err == nil {
+			restartSucceeded := false
+			start := time.Now()
+			for time.Now().Sub(start) < time.Duration(self.RestartTimeout) {
+				ok, err := self.getNodeReadiness(node.Metadata.Name)
+				if err != nil {
+					logger.Errorf("Failed to determine readiness of node %s: %s", node.Metadata.Name, err.Error())
+					// Don't set self.NodeErrors here; weird stuff might happen between shutdown and startup.
+					// Just log any errors.
+				}
+				if ok {
+					restartSucceeded = true
+					break
+				}
+			}
+			if !restartSucceeded {
+				err = fmt.Errorf("Node failed to become ready after restarting")
+			}
+		}
+		// I don't like the fact that each checker plugin needs to do the restart
+		// and DNS change itself.  There should be one function that calls both.
+		dnsErr := commonlib.SetDNS(self.svc, ec2Id)
+		if dnsErr != nil {
+			logger.Errorf("Failed to set DNS for node %s (instance %s): %s", openshiftName, ec2Id, dnsErr.Error())
+			mailErr := commonlib.SendMail(fmt.Sprintf("Failed to set DNS for OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), dnsErr.Error())
+			if mailErr != nil {
+				log.Errorf("Failed to send email: %s", mailErr.Error())
+			}
+		}
+	}
+	if err != nil {
+		logger.Errorf("Failed to restart node %s (instance %s): %s", openshiftName, ec2Id, err.Error())
+		if err == commonlib.ErrInstanceTerminated {
+			logger.Errorf("Node %s (instance %s) was terminated, so this is probably not a problem.", openshiftName, ec2Id, err.Error())
+		} else {
+			self.nodeErrors[node.Metadata.Name] = err
+		}
+		mailErr := commonlib.SendMail(fmt.Sprintf("Failed to restart OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), err.Error())
+		if mailErr != nil {
+			log.Errorf("Failed to send email: %s", mailErr.Error())
+		}
+	} else {
+		var logMsg string
+		var mailSubject string
+		var mailMsg string
+		if self.Simulate {
+			logMsg = "Node %s (instance %s) would be restarted."
+			mailSubject = "Would have restarted OpenShift node %s (EC2 instance %s)"
+			mailMsg = "Maybe you should restart it?"
+		} else {
+			logMsg = "Node %s (instance %s) has been restarted."
+			mailSubject = "Restarted OpenShift node %s (EC2 instance %s)"
+			mailMsg = "Does a DNS entry need to be updated?"
+		}
+		logger.Infof(logMsg, openshiftName, ec2Id)
+		mailErr := commonlib.SendMail(fmt.Sprintf(mailSubject, openshiftName, ec2Name), mailMsg)
+		if mailErr != nil {
+			log.Errorf("Failed to send email: %s", mailErr.Error())
+		}
+	}
+}
+
 func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 	logger.Debugf("Fetching %s", self.nodesUrl)
 	req, err := http.NewRequest("GET", self.nodesUrl, nil)
@@ -350,11 +421,6 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 			continue
 		}
 		if !ok {
-			openshiftName := node.Metadata.Name
-			ec2Id := *instance.InstanceId
-			ec2Name, err := commonlib.GetInstanceName(instance)
-			if err != nil {
-				ec2Name = ec2Id
 			}
 			logger.Infof("Node %s is not ready!", node.Metadata.Name)
 			{
@@ -370,68 +436,8 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 					}).Debug(string(jsonBytes))
 				}
 			}
-			if !self.Simulate {
-				err = commonlib.RestartInstance(self.svc, ec2Id)
-				if err == nil {
-					restartSucceeded := false
-					start := time.Now()
-					for time.Now().Sub(start) < time.Duration(self.RestartTimeout) {
-						ok, err := self.getNodeReadiness(node.Metadata.Name)
-						if err != nil {
-							logger.Errorf("Failed to determine readiness of node %s: %s", node.Metadata.Name, err.Error())
-							// Don't set self.NodeErrors here; weird stuff might happen between shutdown and startup.
-							// Just log any errors.
-						}
-						if ok {
-							restartSucceeded = true
-							break
-						}
-					}
-					if !restartSucceeded {
-						err = fmt.Errorf("Node failed to become ready after restarting")
-					}
-				}
-				// I don't like the fact that each checker plugin needs to do the restart
-				// and DNS change itself.  There should be one function that calls both.
-				dnsErr := commonlib.SetDNS(self.svc, ec2Id)
-				if dnsErr != nil {
-					logger.Errorf("Failed to set DNS for node %s (instance %s): %s", openshiftName, ec2Id, dnsErr.Error())
-					mailErr := commonlib.SendMail(fmt.Sprintf("Failed to set DNS for OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), dnsErr.Error())
-					if mailErr != nil {
-						log.Errorf("Failed to send email: %s", mailErr.Error())
-					}
-				}
-			}
-			if err != nil {
-				logger.Errorf("Failed to restart node %s (instance %s): %s", openshiftName, ec2Id, err.Error())
-				if err == commonlib.ErrInstanceTerminated {
-					logger.Errorf("Node %s (instance %s) was terminated, so this is probably not a problem.", openshiftName, ec2Id, err.Error())
-				} else {
-					self.nodeErrors[node.Metadata.Name] = err
-				}
-				mailErr := commonlib.SendMail(fmt.Sprintf("Failed to restart OpenShift node %s (EC2 instance %s)", openshiftName, ec2Name), err.Error())
-				if mailErr != nil {
-					log.Errorf("Failed to send email: %s", mailErr.Error())
-				}
-			} else {
-				var logMsg string
-				var mailSubject string
-				var mailMsg string
-				if self.Simulate {
-					logMsg = "Node %s (instance %s) would be restarted."
-					mailSubject = "Would have restarted OpenShift node %s (EC2 instance %s)"
-					mailMsg = "Maybe you should restart it?"
-				} else {
-					logMsg = "Node %s (instance %s) has been restarted."
-					mailSubject = "Restarted OpenShift node %s (EC2 instance %s)"
-					mailMsg = "Does a DNS entry need to be updated?"
-				}
-				logger.Infof(logMsg, openshiftName, ec2Id)
-				mailErr := commonlib.SendMail(fmt.Sprintf(mailSubject, openshiftName, ec2Name), mailMsg)
-				if mailErr != nil {
-					log.Errorf("Failed to send email: %s", mailErr.Error())
-				}
-			}
+			// I don't like the fact that instance and node are separate things.
+			self.restartNode(logger, instance, &node)
 		} else {
 			logger.Debugf("Node %s is ready", node.Metadata.Name)
 		}
