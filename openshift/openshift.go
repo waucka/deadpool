@@ -50,21 +50,28 @@ type TestingConfig struct {
 	ForceNotReady []string `yaml:"force_not_ready"`
 }
 
+type NodeCheck struct {
+	ConsecutiveFailures int
+	CheckedAt           time.Time
+}
+
 type OpenShiftChecker struct {
-	AccessToken    string               `yaml:"token"`
-	Host           string               `yaml:"host"`
-	Port           int                  `yaml:"port"`
-	CaCertFile     string               `yaml:"ca_cert_file"`
-	NodeMatchers   []NodeMatcher        `yaml:"node_matchers"`
-	Testing        TestingConfig        `yaml:"testing"`
-	Simulate       bool                 `yaml:"simulate"`
-	RestartTimeout int                  `yaml:"restart_timeout"`
-	client         *http.Client         `yaml:"-"`
-	svc            *ec2.EC2             `yaml:"-"`
-	nodesUrl       string               `yaml:"-"`
-	errors         map[string]error     `yaml:"-"`
-	nodeErrors     map[string]error     `yaml:"-"`
-	nodeAges       map[string]time.Time `yaml:"-"`
+	AccessToken      string                `yaml:"token"`
+	Host             string                `yaml:"host"`
+	Port             int                   `yaml:"port"`
+	CaCertFile       string                `yaml:"ca_cert_file"`
+	NodeMatchers     []NodeMatcher         `yaml:"node_matchers"`
+	Testing          TestingConfig         `yaml:"testing"`
+	Simulate         bool                  `yaml:"simulate"`
+	RestartTimeout   int                   `yaml:"restart_timeout"`
+	FailureThreshold int                   `yaml:"failure_threshold"`
+	client           *http.Client          `yaml:"-"`
+	svc              *ec2.EC2              `yaml:"-"`
+	nodesUrl         string                `yaml:"-"`
+	nodeStatuses     map[string]*NodeCheck `yaml:"-"`
+	errors           map[string]error      `yaml:"-"`
+	nodeErrors       map[string]error      `yaml:"-"`
+	nodeAges         map[string]time.Time  `yaml:"-"`
 }
 
 func (self *OpenShiftChecker) Validate() error {
@@ -79,6 +86,9 @@ func (self *OpenShiftChecker) Validate() error {
 	}
 	if self.Port < 0 {
 		return fmt.Errorf("Invalid OpenShift server port %s", self.Port)
+	}
+	if self.FailureThreshold <= 0 {
+		return fmt.Errorf("Invalid failure threshold")
 	}
 	return nil
 }
@@ -421,8 +431,17 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 			continue
 		}
 		if !ok {
+			nodeStatus, found := self.nodeStatuses[node.Metadata.Name]
+			if !found {
+				nodeStatus = &NodeCheck{
+					ConsecutiveFailures: 0,
+					CheckedAt:           now,
+				}
+				self.nodeStatuses[node.Metadata.Name] = nodeStatus
 			}
+			nodeStatus.ConsecutiveFailures++
 			logger.Infof("Node %s is not ready!", node.Metadata.Name)
+			logger.Infof("Node %s has been NotReady for the last %d checks.", node.Metadata.Name, nodeStatus.ConsecutiveFailures)
 			{
 				jsonBytes, err := json.Marshal(&node)
 				if err != nil {
@@ -436,10 +455,13 @@ func (self *OpenShiftChecker) Execute(logger *log.Entry) {
 					}).Debug(string(jsonBytes))
 				}
 			}
-			// I don't like the fact that instance and node are separate things.
-			self.restartNode(logger, instance, &node)
+			if nodeStatus.ConsecutiveFailures >= self.FailureThreshold {
+				// I don't like the fact that instance and node are separate things.
+				self.restartNode(logger, instance, &node)
+			}
 		} else {
 			logger.Debugf("Node %s is ready", node.Metadata.Name)
+			delete(self.nodeStatuses, node.Metadata.Name)
 		}
 	}
 }
@@ -465,10 +487,11 @@ func (self *OpenShiftChecker) lookupInstance(nodeName string) (*ec2.Instance, er
 
 func Create(svc *ec2.EC2, raw yaml.MapSlice) (commonlib.Checker, error) {
 	checker := &OpenShiftChecker{
-		svc:        svc,
-		errors:     make(map[string]error),
-		nodeErrors: make(map[string]error),
-		nodeAges:   make(map[string]time.Time),
+		svc:          svc,
+		nodeStatuses: make(map[string]*NodeCheck),
+		errors:       make(map[string]error),
+		nodeErrors:   make(map[string]error),
+		nodeAges:     make(map[string]time.Time),
 	}
 
 	// DEAR GOD THIS IS HIDEOUS

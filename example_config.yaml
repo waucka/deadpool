@@ -46,6 +46,8 @@ checkers:
     simulate: False
     # This is the number of seconds to wait for a restarted node to become available again.
     restart_timeout: 300
+    # Number of consecutive failed checks needed to trigger a restart
+    failure_threshold: 5
     # Use this section to force deadpool to consider a particular EC2 instance
     # to be unrepsonsive.
     # testing:
